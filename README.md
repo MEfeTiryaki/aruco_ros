@@ -1,76 +1,23 @@
 aruco_ros
 =========
 
-Software package and ROS wrappers of the [Aruco][1] Augmented Reality marker detector library.
+Software package and ROS wrappers of the [Aruco][1] Augmented Reality marker detector library. More info can be found in the origin of the fork [aruco](https://github.com/pal-robotics/aruco_ros).
 
+# Additions
+## Multi_board application
+The multi board detection currently detects the board with 6 marker as in [here](https://github.com/Sadetra/cri_efe/tree/master/cri_efe_aruco/urdf/multi_markers). 
 
-### Features
-<img align="right" src="https://raw.github.com/pal-robotics/aruco_ros/master/aruco_ros/etc/marker_in_hand.jpg" />
+### How to use
+* Print your marker board with 6 markers of your choice
+* Create your parameters.yaml like [this](https://github.com/Sadetra/cri_efe/blob/master/cri_efe_aruco/config/parameters.yaml). "board_id" is the aruco id of each board. "board_x/y" are the distance of the center of the each markers from the center of the multi_board. "color_r/g/b" are to visualize marker detection in rviz.
+* Create a launch file like [this](https://github.com/Sadetra/cri_efe/blob/master/cri_efe_aruco/launch/multi.launch). "marker_size", "camera_name", "camera_frame" and 'marker_frame" frames are the important arguments here. Be aware of camera topics.
+* When you launch, it detect markers and calculate the postion and orientation of the multi_marker by avaraging the position and orientation of the each marker
+* To test markers on Gazebo simulations, the easiest way to generate markers in Gazebo is drawing them in urdf. You can find first 7 markers [here](https://github.com/Sadetra/cri_efe/tree/master/cri_efe_aruco/urdf/single_markers)
 
- * High-framerate tracking of AR markers
- 
- * Generate AR markers with given size and optimized for minimal perceptive ambiguity (when there are more markers to track)
- 
- * Enhanced precision tracking by using boards of markers
- 
- * ROS wrappers
-
-
-### Applications
-
- * Object pose estimation
- * Visual servoing: track object and hand at the same time
-
-<img align="right" src="https://raw.github.com/pal-robotics/aruco_ros/master/aruco_ros/etc/reem_gazebo_floating_marker_world.png"/>
-
-### ROS API
-
-#### Messages
-
- * aruco_ros/Marker.msg
-
-        Header header
-        uint32 id
-        geometry_msgs/PoseWithCovariance pose
-        float64 confidence
-
- * aruco_ros/MarkerArray.msg
-
-        Header header
-        aruco_ros/Marker[] markers
-
-### Test it with REEM
-
- * Open a REEM in simulation with a marker floating in front of the robot. This will start the stereo cameras of the robot too. Since this is only a vision test, there is nothing else in this world apart from the robot and a marker floating in front of it. An extra light source had to be added to compensate for the default darkness.
-
-    ```
-    roslaunch reem_gazebo reem_gazebo.launch world:=floating_marker
-    ```
- * Launch the `image_proc` node to get undistorted images from the cameras of the robot.
- 
-    ```
-    ROS_NAMESPACE=/stereo/right rosrun image_proc image_proc image_raw:=image
-    ```
- * Start the `single` node which will start tracking the specified marker and will publish its pose in the camera frame
- 
-    ```
-    roslaunch aruco_ros single.launch markerId:=26 markerSize:=0.08 eye:="right"
-    ```
-
-    the frame in which the pose is refered to can be chosen with the 'ref_frame' argument. The next example forces the marker pose to
-    be published with respect to the robot base_link frame:
-
-    ```
-    roslaunch aruco_ros single.launch markerId:=26 markerSize:=0.08 eye:="right" ref_frame:=/base_link
-    ```
-    
- * Visualize the result
- 
-    ```    
-    rosrun image_view image_view image:=/aruco_single/result
-    ```
-
-<img align="right" src="https://raw.github.com/pal-robotics/aruco_ros/master/aruco_ros/etc/reem_gazebo_floating_marker.png"/>
+### Next steps and future work
+* Orientation averaging
+* Marker urdf generator
+* Different multi_board schemes 
 
 
 [1]: http://www.sciencedirect.com/science/article/pii/S0031320314000235 "Automatic generation and detection of highly reliable fiducial markers under occlusion by S. Garrido-Jurado and R. Muñoz-Salinas and F.J. Madrid-Cuevas and M.J. Marín-Jiménez 2014"
