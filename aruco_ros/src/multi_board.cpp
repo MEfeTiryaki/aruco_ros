@@ -50,7 +50,7 @@ or implied, of Rafael Muñoz Salinas.
 #include <aruco_ros/ArucoThresholdConfig.h>
 using namespace aruco;
 
-class ArucoSimple
+class ArucoMulti
 {
 private:
   cv::Mat inImage;
@@ -74,6 +74,15 @@ private:
 
   double marker_size;
   int marker_id;
+  std::vector<int> vMarker_id;
+  std::vector<double> vMarker_x;
+  std::vector<double> vMarker_y;
+  std::vector<double> vMarker_r;
+  std::vector<double> vMarker_g;
+  std::vector<double> vMarker_b;
+  std::vector<ros::Publisher> vMarker_pub; //rviz visualization marker
+  std::unordered_map<int,int> markerIDToVectorPosition;
+  std::vector<bool> vMarker_detected;
 
   ros::NodeHandle nh;
   image_transport::ImageTransport it;
@@ -84,7 +93,7 @@ private:
   dynamic_reconfigure::Server<aruco_ros::ArucoThresholdConfig> dyn_rec_server;
 
 public:
-  ArucoSimple()
+  ArucoMulti()
     : cam_info_received(false),
       nh("~"),
       it(nh)
@@ -114,8 +123,8 @@ public:
 
 
 
-    image_sub = it.subscribe("/image", 1, &ArucoSimple::image_callback, this);
-    cam_info_sub = nh.subscribe("/camera_info", 1, &ArucoSimple::cam_info_callback, this);
+    image_sub = it.subscribe("/image", 1, &ArucoMulti::image_callback, this);
+    cam_info_sub = nh.subscribe("/camera_info", 1, &ArucoMulti::cam_info_callback, this);
 
     image_pub = it.advertise("result", 1);
     debug_pub = it.advertise("debug", 1);
@@ -132,6 +141,24 @@ public:
     nh.param<std::string>("marker_frame", marker_frame, "");
     nh.param<bool>("image_is_rectified", useRectifiedImages, true);
 
+
+
+    if(nh.getParam("/aruco_multi/multi_board/board_id", vMarker_id))
+      ROS_INFO("[ArucoMulti] : Board are found");
+    else
+      ROS_INFO("[ArucoMulti] : Board are NOT found. Please check the rosparam import in your launch file.");
+    nh.getParam("/aruco_multi/multi_board/board_x", vMarker_x);
+    nh.getParam("/aruco_multi/multi_board/board_y", vMarker_y);
+    nh.getParam("/aruco_multi/multi_board/color_r", vMarker_r);
+    nh.getParam("/aruco_multi/multi_board/color_g", vMarker_g);
+    nh.getParam("/aruco_multi/multi_board/color_b", vMarker_b);
+    for(int i=0;i<6;i++){
+      vMarker_pub.push_back(nh.advertise<visualization_msgs::Marker>("marker"+ std::to_string(i), 10));
+      // Hold the postion of the marker in vector when the marker id is given
+      markerIDToVectorPosition.insert({vMarker_id[i],i});
+      vMarker_detected.push_back(false) ;
+    }
+
     ROS_ASSERT(camera_frame != "" && marker_frame != "");
 
     if ( reference_frame.empty() )
@@ -142,7 +169,7 @@ public:
     ROS_INFO("Aruco node will publish pose to TF with %s as parent and %s as child.",
              reference_frame.c_str(), marker_frame.c_str());
 
-    dyn_rec_server.setCallback(boost::bind(&ArucoSimple::reconf_callback, this, _1, _2));
+    dyn_rec_server.setCallback(boost::bind(&ArucoMulti::reconf_callback, this, _1, _2));
   }
 
   bool getTransform(const std::string& refFrame,
@@ -195,14 +222,15 @@ public:
       return;
     }
 
-
     static tf::TransformBroadcaster br;
     if(cam_info_received)
     {
+
       ros::Time curr_stamp(ros::Time::now());
       cv_bridge::CvImagePtr cv_ptr;
       try
       {
+
         cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::RGB8);
         inImage = cv_ptr->image;
 
@@ -210,13 +238,15 @@ public:
         markers.clear();
         //Ok, let's detect
         mDetector.detect(inImage, markers, camParam, marker_size, false);
-        std::cout << "DETECTED MARKER NO : " <<  markers.size() << std::endl ;
+        std::vector<geometry_msgs::PoseStamped> vPoseMsg(6);
         //for each marker, draw info and its boundaries in the image
         for(size_t i=0; i<markers.size(); ++i)
         {
-          // only publishing the selected marker
-          if(markers[i].id == marker_id)
-          {
+
+          //check if marker is in the list
+          if(markerIDToVectorPosition.count(markers[i].id)>0){
+            // get the index of the marker
+            int vIndex = markerIDToVectorPosition[markers[i].id];
             tf::Transform transform = aruco_ros::arucoMarker2Tf(markers[i]);
             tf::StampedTransform cameraToReference;
             cameraToReference.setIdentity();
@@ -227,24 +257,58 @@ public:
                            camera_frame,
                            cameraToReference);
             }
+            // XXX : This part rotate the tf wrt the image to the camera frame
+            cv::Mat cam_to_real(3, 3, CV_64FC1);
+            cam_to_real.at<double>(0,0) = 0.0;
+            cam_to_real.at<double>(0,1) = 0.0;
+            cam_to_real.at<double>(0,2) = 1.0;
+            cam_to_real.at<double>(1,0) = -1.0;
+            cam_to_real.at<double>(1,1) = 0.0;
+            cam_to_real.at<double>(1,2) = 0.0;
+            cam_to_real.at<double>(2,0) = 0.0;
+            cam_to_real.at<double>(2,1) = -1.0;
+            cam_to_real.at<double>(2,2) = 0.0;
+
+            tf::Matrix3x3 tf_rot(cam_to_real.at<double>(0,0), cam_to_real.at<double>(0,1), cam_to_real.at<double>(0,2),
+                                 cam_to_real.at<double>(1,0), cam_to_real.at<double>(1,1), cam_to_real.at<double>(1,2),
+                                 cam_to_real.at<double>(2,0), cam_to_real.at<double>(2,1), cam_to_real.at<double>(2,2));
+            tf::Vector3 tf_orig(0.0,0.0,0.0);
+            tf::Transform cam_to_real_tf = tf::Transform(tf_rot, tf_orig);
 
             transform =
               static_cast<tf::Transform>(cameraToReference)
               * static_cast<tf::Transform>(rightToLeft)
+              * cam_to_real_tf
               * transform;
 
             tf::StampedTransform stampedTransform(transform, curr_stamp,
                                                   reference_frame, marker_frame);
-            br.sendTransform(stampedTransform);
-            geometry_msgs::PoseStamped poseMsg;
-            tf::poseTFToMsg(transform, poseMsg.pose);
-            poseMsg.header.frame_id = reference_frame;
-            poseMsg.header.stamp = curr_stamp;
-            pose_pub.publish(poseMsg);
-
+            //br.sendTransform(stampedTransform);
             geometry_msgs::TransformStamped transformMsg;
             tf::transformStampedTFToMsg(stampedTransform, transformMsg);
-            transform_pub.publish(transformMsg);
+
+            // XXX : record poses of each marker
+            tf::poseTFToMsg(transform, vPoseMsg[vIndex].pose);
+
+            visualization_msgs::Marker visMarker;
+            visMarker.header = transformMsg.header;
+            visMarker.id = 1;
+            visMarker.type   = visualization_msgs::Marker::CUBE;
+            visMarker.action = visualization_msgs::Marker::ADD;
+            visMarker.pose = vPoseMsg[vIndex].pose;
+            visMarker.scale.x = marker_size;
+            visMarker.scale.y = 0.001;
+            visMarker.scale.z = marker_size;
+            visMarker.color.a = 1.0;
+            visMarker.lifetime = ros::Duration(3.0);
+            visMarker.color.r = vMarker_r[vIndex];
+            visMarker.color.b = vMarker_b[vIndex];
+            visMarker.color.g = vMarker_g[vIndex];
+            vMarker_pub[vIndex].publish(visMarker);
+
+            vPoseMsg[vIndex].pose.position.x -= vMarker_x[vIndex] ;
+            vPoseMsg[vIndex].pose.position.y -= vMarker_y[vIndex] ;
+            vMarker_detected[vIndex] = true;
 
             geometry_msgs::Vector3Stamped positionMsg;
             positionMsg.header = transformMsg.header;
@@ -258,27 +322,51 @@ public:
             pixelMsg.point.z = 0;
             pixel_pub.publish(pixelMsg);
 
-            //Publish rviz marker representing the ArUco marker patch
-            visualization_msgs::Marker visMarker;
-            visMarker.header = transformMsg.header;
-            visMarker.id = 1;
-            visMarker.type   = visualization_msgs::Marker::CUBE;
-            visMarker.action = visualization_msgs::Marker::ADD;
-            visMarker.pose = poseMsg.pose;
-            visMarker.scale.x = marker_size;
-            visMarker.scale.y = 0.001;
-            visMarker.scale.z = marker_size;
-            visMarker.color.r = 1.0;
-            visMarker.color.g = 0;
-            visMarker.color.b = 0;
-            visMarker.color.a = 1.0;
-            visMarker.lifetime = ros::Duration(3.0);
-            marker_pub.publish(visMarker);
 
+
+            // but drawing all the detected markers
+            markers[i].draw(inImage,cv::Scalar(0,0,255),2);
           }
-          // but drawing all the detected markers
-          markers[i].draw(inImage,cv::Scalar(0,0,255),2);
         }
+
+        // XXX : average the positions
+        double numberOfDetectedMarker = 0.0;
+        geometry_msgs::PoseStamped poseMsg;
+        for(int i=0 ; i<6 ;i++){
+          if(vMarker_detected[i]){
+            poseMsg.pose.position.x += vPoseMsg[i].pose.position.x ;
+            poseMsg.pose.position.y += vPoseMsg[i].pose.position.y ;
+            poseMsg.pose.position.z += vPoseMsg[i].pose.position.z ;
+            // TODO : Average the pose as well
+            poseMsg.pose.orientation = vPoseMsg[i].pose.orientation ;
+            numberOfDetectedMarker += 1.0 ;
+          }
+          vMarker_detected[i]=false;
+        }
+        poseMsg.pose.position.x /= numberOfDetectedMarker ;
+        poseMsg.pose.position.y /= numberOfDetectedMarker ;
+        poseMsg.pose.position.z /= numberOfDetectedMarker ;
+        poseMsg.header.frame_id = reference_frame;
+        poseMsg.header.stamp = curr_stamp;
+        pose_pub.publish(poseMsg);
+
+        geometry_msgs::TransformStamped transformMsg;
+        transformMsg.header = msg->header;
+        transformMsg.header.stamp = curr_stamp;
+        transformMsg.header.frame_id = reference_frame;
+        transformMsg.child_frame_id = marker_frame;
+        transformMsg.transform.translation.x = poseMsg.pose.position.x ;
+        transformMsg.transform.translation.y = poseMsg.pose.position.y ;
+        transformMsg.transform.translation.z = poseMsg.pose.position.z ;
+        transformMsg.transform.rotation.x = poseMsg.pose.orientation.x ;
+        transformMsg.transform.rotation.y = poseMsg.pose.orientation.y ;
+        transformMsg.transform.rotation.z = poseMsg.pose.orientation.z ;
+        transformMsg.transform.rotation.w = poseMsg.pose.orientation.w ;
+        tf::StampedTransform stampedTransform;
+        tf::transformStampedMsgToTF (transformMsg, stampedTransform);
+        br.sendTransform(stampedTransform);
+        transform_pub.publish(transformMsg);
+
 
         //draw a 3d cube in each marker if there is 3d info
         if(camParam.isValid() && marker_size!=-1)
@@ -294,6 +382,8 @@ public:
           //show input with augmented information
           cv_bridge::CvImage out_msg;
           out_msg.header.stamp = curr_stamp;
+          out_msg.header.frame_id = msg->header.seq;
+          out_msg.header.frame_id = msg->header.frame_id;
           out_msg.encoding = sensor_msgs::image_encodings::RGB8;
           out_msg.image = inImage;
           image_pub.publish(out_msg.toImageMsg());
@@ -348,9 +438,9 @@ public:
 
 int main(int argc,char **argv)
 {
-  ros::init(argc, argv, "aruco_simple");
+  ros::init(argc, argv, "aruco_multi");
 
-  ArucoSimple node;
+  ArucoMulti node;
 
   ros::spin();
 }
