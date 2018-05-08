@@ -45,6 +45,7 @@ or implied, of Rafael Muñoz Salinas.
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
 #include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
 
 #include <dynamic_reconfigure/server.h>
 #include <aruco_ros/ArucoThresholdConfig.h>
@@ -81,6 +82,8 @@ private:
   std::vector<double> vMarker_g;
   std::vector<double> vMarker_b;
   std::vector<ros::Publisher> vMarker_pub; //rviz visualization marker
+  ros::Publisher markerArray_pub; //rviz visualization marker
+
   std::unordered_map<int,int> markerIDToVectorPosition;
   std::vector<bool> vMarker_detected;
 
@@ -152,8 +155,8 @@ public:
     nh.getParam("/aruco_multi/multi_board/color_r", vMarker_r);
     nh.getParam("/aruco_multi/multi_board/color_g", vMarker_g);
     nh.getParam("/aruco_multi/multi_board/color_b", vMarker_b);
+    markerArray_pub = nh.advertise<visualization_msgs::MarkerArray>("markers", 10);
     for(int i=0;i<6;i++){
-      vMarker_pub.push_back(nh.advertise<visualization_msgs::Marker>("marker"+ std::to_string(i), 10));
       // Hold the postion of the marker in vector when the marker id is given
       markerIDToVectorPosition.insert({vMarker_id[i],i});
       vMarker_detected.push_back(false) ;
@@ -239,10 +242,11 @@ public:
         //Ok, let's detect
         mDetector.detect(inImage, markers, camParam, marker_size, false);
         std::vector<geometry_msgs::PoseStamped> vPoseMsg(6);
+        visualization_msgs::MarkerArray visMarkerArray;
+        bool detected = false ;
         //for each marker, draw info and its boundaries in the image
         for(size_t i=0; i<markers.size(); ++i)
         {
-
           //check if marker is in the list
           if(markerIDToVectorPosition.count(markers[i].id)>0){
             // get the index of the marker
@@ -257,28 +261,9 @@ public:
                            camera_frame,
                            cameraToReference);
             }
-            // XXX : This part rotate the tf wrt the image to the camera frame
-            cv::Mat cam_to_real(3, 3, CV_64FC1);
-            cam_to_real.at<double>(0,0) = 0.0;
-            cam_to_real.at<double>(0,1) = 0.0;
-            cam_to_real.at<double>(0,2) = 1.0;
-            cam_to_real.at<double>(1,0) = -1.0;
-            cam_to_real.at<double>(1,1) = 0.0;
-            cam_to_real.at<double>(1,2) = 0.0;
-            cam_to_real.at<double>(2,0) = 0.0;
-            cam_to_real.at<double>(2,1) = -1.0;
-            cam_to_real.at<double>(2,2) = 0.0;
-
-            tf::Matrix3x3 tf_rot(cam_to_real.at<double>(0,0), cam_to_real.at<double>(0,1), cam_to_real.at<double>(0,2),
-                                 cam_to_real.at<double>(1,0), cam_to_real.at<double>(1,1), cam_to_real.at<double>(1,2),
-                                 cam_to_real.at<double>(2,0), cam_to_real.at<double>(2,1), cam_to_real.at<double>(2,2));
-            tf::Vector3 tf_orig(0.0,0.0,0.0);
-            tf::Transform cam_to_real_tf = tf::Transform(tf_rot, tf_orig);
-
             transform =
               static_cast<tf::Transform>(cameraToReference)
               * static_cast<tf::Transform>(rightToLeft)
-              * cam_to_real_tf
               * transform;
 
             tf::StampedTransform stampedTransform(transform, curr_stamp,
@@ -292,7 +277,7 @@ public:
 
             visualization_msgs::Marker visMarker;
             visMarker.header = transformMsg.header;
-            visMarker.id = 1;
+            visMarker.id = vIndex; 
             visMarker.type   = visualization_msgs::Marker::CUBE;
             visMarker.action = visualization_msgs::Marker::ADD;
             visMarker.pose = vPoseMsg[vIndex].pose;
@@ -304,7 +289,7 @@ public:
             visMarker.color.r = vMarker_r[vIndex];
             visMarker.color.b = vMarker_b[vIndex];
             visMarker.color.g = vMarker_g[vIndex];
-            vMarker_pub[vIndex].publish(visMarker);
+            visMarkerArray.markers.push_back(visMarker);
 
             vPoseMsg[vIndex].pose.position.x -= vMarker_x[vIndex] ;
             vPoseMsg[vIndex].pose.position.y -= vMarker_y[vIndex] ;
@@ -322,51 +307,56 @@ public:
             pixelMsg.point.z = 0;
             pixel_pub.publish(pixelMsg);
 
-
-
             // but drawing all the detected markers
             markers[i].draw(inImage,cv::Scalar(0,0,255),2);
+            detected |= true ;
           }
+
         }
 
-        // XXX : average the positions
-        double numberOfDetectedMarker = 0.0;
-        geometry_msgs::PoseStamped poseMsg;
-        for(int i=0 ; i<6 ;i++){
-          if(vMarker_detected[i]){
-            poseMsg.pose.position.x += vPoseMsg[i].pose.position.x ;
-            poseMsg.pose.position.y += vPoseMsg[i].pose.position.y ;
-            poseMsg.pose.position.z += vPoseMsg[i].pose.position.z ;
-            // TODO : Average the pose as well
-            poseMsg.pose.orientation = vPoseMsg[i].pose.orientation ;
-            numberOfDetectedMarker += 1.0 ;
+        // PUBLISH MarkerArray
+        markerArray_pub.publish(visMarkerArray);
+
+
+        if (detected){
+          // XXX : average the positions
+          double numberOfDetectedMarker = 0.0;
+          geometry_msgs::PoseStamped poseMsg;
+          for(int i=0 ; i<6 ;i++){
+            if(vMarker_detected[i]){
+              poseMsg.pose.position.x += vPoseMsg[i].pose.position.x ;
+              poseMsg.pose.position.y += vPoseMsg[i].pose.position.y ;
+              poseMsg.pose.position.z += vPoseMsg[i].pose.position.z ;
+              // TODO : Average the pose as well
+              poseMsg.pose.orientation = vPoseMsg[i].pose.orientation ;
+              numberOfDetectedMarker += 1.0 ;
+            }
+            vMarker_detected[i]=false;
           }
-          vMarker_detected[i]=false;
+          poseMsg.pose.position.x /= numberOfDetectedMarker ;
+          poseMsg.pose.position.y /= numberOfDetectedMarker ;
+          poseMsg.pose.position.z /= numberOfDetectedMarker ;
+          poseMsg.header.frame_id = reference_frame;
+          poseMsg.header.stamp = curr_stamp;
+          pose_pub.publish(poseMsg);
+
+          geometry_msgs::TransformStamped transformMsg;
+          transformMsg.header = msg->header;
+          transformMsg.header.stamp = curr_stamp;
+          transformMsg.header.frame_id = reference_frame;
+          transformMsg.child_frame_id = marker_frame;
+          transformMsg.transform.translation.x = poseMsg.pose.position.x ;
+          transformMsg.transform.translation.y = poseMsg.pose.position.y ;
+          transformMsg.transform.translation.z = poseMsg.pose.position.z ;
+          transformMsg.transform.rotation.x = poseMsg.pose.orientation.x ;
+          transformMsg.transform.rotation.y = poseMsg.pose.orientation.y ;
+          transformMsg.transform.rotation.z = poseMsg.pose.orientation.z ;
+          transformMsg.transform.rotation.w = poseMsg.pose.orientation.w ;
+          tf::StampedTransform stampedTransform;
+          tf::transformStampedMsgToTF (transformMsg, stampedTransform);
+          br.sendTransform(stampedTransform);
+          transform_pub.publish(transformMsg);
         }
-        poseMsg.pose.position.x /= numberOfDetectedMarker ;
-        poseMsg.pose.position.y /= numberOfDetectedMarker ;
-        poseMsg.pose.position.z /= numberOfDetectedMarker ;
-        poseMsg.header.frame_id = reference_frame;
-        poseMsg.header.stamp = curr_stamp;
-        pose_pub.publish(poseMsg);
-
-        geometry_msgs::TransformStamped transformMsg;
-        transformMsg.header = msg->header;
-        transformMsg.header.stamp = curr_stamp;
-        transformMsg.header.frame_id = reference_frame;
-        transformMsg.child_frame_id = marker_frame;
-        transformMsg.transform.translation.x = poseMsg.pose.position.x ;
-        transformMsg.transform.translation.y = poseMsg.pose.position.y ;
-        transformMsg.transform.translation.z = poseMsg.pose.position.z ;
-        transformMsg.transform.rotation.x = poseMsg.pose.orientation.x ;
-        transformMsg.transform.rotation.y = poseMsg.pose.orientation.y ;
-        transformMsg.transform.rotation.z = poseMsg.pose.orientation.z ;
-        transformMsg.transform.rotation.w = poseMsg.pose.orientation.w ;
-        tf::StampedTransform stampedTransform;
-        tf::transformStampedMsgToTF (transformMsg, stampedTransform);
-        br.sendTransform(stampedTransform);
-        transform_pub.publish(transformMsg);
-
 
         //draw a 3d cube in each marker if there is 3d info
         if(camParam.isValid() && marker_size!=-1)
