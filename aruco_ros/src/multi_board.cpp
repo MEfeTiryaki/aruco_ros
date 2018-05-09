@@ -137,7 +137,7 @@ public:
     marker_pub = nh.advertise<visualization_msgs::Marker>("marker", 10);
     pixel_pub = nh.advertise<geometry_msgs::PointStamped>("pixel", 10);
 
-    nh.param<double>("marker_size", marker_size, 0.05);
+    nh.param<double>("marker_size", marker_size, 0.09);
     nh.param<int>("marker_id", marker_id, 300);
     nh.param<std::string>("reference_frame", reference_frame, "");
     nh.param<std::string>("camera_frame", camera_frame, "");
@@ -277,7 +277,7 @@ public:
 
             visualization_msgs::Marker visMarker;
             visMarker.header = transformMsg.header;
-            visMarker.id = vIndex; 
+            visMarker.id = vIndex;
             visMarker.type   = visualization_msgs::Marker::CUBE;
             visMarker.action = visualization_msgs::Marker::ADD;
             visMarker.pose = vPoseMsg[vIndex].pose;
@@ -292,7 +292,7 @@ public:
             visMarkerArray.markers.push_back(visMarker);
 
             vPoseMsg[vIndex].pose.position.x -= vMarker_x[vIndex] ;
-            vPoseMsg[vIndex].pose.position.y -= vMarker_y[vIndex] ;
+            vPoseMsg[vIndex].pose.position.z -= vMarker_y[vIndex] ;
             vMarker_detected[vIndex] = true;
 
             geometry_msgs::Vector3Stamped positionMsg;
@@ -401,6 +401,9 @@ public:
   void cam_info_callback(const sensor_msgs::CameraInfo &msg)
   {
     camParam = aruco_ros::rosCameraInfo2ArucoCamParams(msg, useRectifiedImages);
+    std::cerr<<camParam.CameraMatrix;
+    std::cerr<<camParam.Distorsion;
+    std::cerr<<camParam.CamSize;
 
     // handle cartesian offset between stereo pairs
     // see the sensor_msgs/CamaraInfo documentation for details
