@@ -50,6 +50,9 @@ or implied, of Rafael Muñoz Salinas.
 
 #include <dynamic_reconfigure/server.h>
 #include <aruco_ros/ArucoThresholdConfig.h>
+
+
+#include <boost/thread.hpp>
 using namespace aruco;
 
 struct MultiBoard {
@@ -57,7 +60,7 @@ struct MultiBoard {
   int boardId;
   std::vector<int> vMarkerId;
   std::vector<double> vMarkerX;
-  std::vector<double> vMarkerZ;
+  std::vector<double> vMarkerY;
   std::vector<double> vMarkerR;
   std::vector<double> vMarkerG;
   std::vector<double> vMarkerB;
@@ -67,14 +70,16 @@ struct MultiBoard {
   bool detected;
 } ;
 
-class AnyArucoMulti
+class AnyArucoMultiConcurrent
 {
 private:
   cv::Mat inImage;
   aruco::CameraParameters camParam;
   tf::StampedTransform rightToLeft;
   bool useRectifiedImages;
-  MarkerDetector mDetector;
+  //MarkerDetector mDetector;
+  vector<MarkerDetector> vDetector;
+  vector<int> availableDetector;
   vector<Marker> markers;
   ros::Subscriber cam_info_sub;
   bool cam_info_received;
@@ -85,14 +90,15 @@ private:
   std::string reference_frame;
   std::string refinementMethod_;
 
-  double markerSize_;
+
   vector<int> vMultiBoardId_;
   vector<MultiBoard> vMultiBoard_;
   std::unordered_map<int,int> markerIDToBoardVectorPosition_;
   ros::Publisher markerArrayPublisher_; //rviz visualization marker
   vector<ros::Publisher> vPosePublisher_;
 
-
+  boost::mutex myMutex_;
+  boost::mutex detectorMutex_;
 
   ros::NodeHandle nh;
   image_transport::ImageTransport it;
@@ -103,7 +109,7 @@ private:
   dynamic_reconfigure::Server<aruco_ros::ArucoThresholdConfig> dyn_rec_server;
 
 public:
-  AnyArucoMulti()
+  AnyArucoMultiConcurrent()
     : cam_info_received(false),
       nh("~"),
       it(nh)
@@ -141,7 +147,7 @@ public:
       nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/marker_size", b.markerSize);
       nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_id", b.vMarkerId);
       nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_x", b.vMarkerX);
-      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_z", b.vMarkerZ);
+      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_y", b.vMarkerY);
       nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_r", b.vMarkerR);
       nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_g", b.vMarkerG);
       nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_b", b.vMarkerB);
@@ -151,7 +157,7 @@ public:
       std::cerr<<"\n";
       vMultiBoard_.push_back(b);
     }
-    markerSize_ = vMultiBoard_[0].markerSize;
+
 
   }
   void create()
@@ -170,33 +176,29 @@ public:
   }
   void initilizeSubscribers()
   {
-    image_sub = it.subscribe("/image", 1, &AnyArucoMulti::image_callback, this);
-    cam_info_sub = nh.subscribe("/camera_info", 1, &AnyArucoMulti::cam_info_callback, this);
+    image_sub = it.subscribe("/image", 1, &AnyArucoMultiConcurrent::image_callback, this);
+
+    cam_info_sub = nh.subscribe("/camera_info", 1, &AnyArucoMultiConcurrent::cam_info_callback, this);
   }
   void initilizeServices()
   {
   }
   void initilize()
   {
-    // Refinement method
-    if ( refinementMethod_ == "SUBPIX" )
-      mDetector.setCornerRefinementMethod(aruco::MarkerDetector::SUBPIX);
-    else if ( refinementMethod_ == "HARRIS" )
-      mDetector.setCornerRefinementMethod(aruco::MarkerDetector::HARRIS);
-    else if ( refinementMethod_ == "NONE" )
-      mDetector.setCornerRefinementMethod(aruco::MarkerDetector::NONE);
-    else
-      mDetector.setCornerRefinementMethod(aruco::MarkerDetector::LINES);
-    //Print parameters of aruco marker detector:
-    ROS_INFO_STREAM("Corner refinement method: " << mDetector.getCornerRefinementMethod());
-    ROS_INFO_STREAM("Threshold method: " << mDetector.getThresholdMethod());
-    double th1, th2;
-    mDetector.getThresholdParams(th1, th2);
-    ROS_INFO_STREAM("Threshold method: " << " th1: " << th1 << " th2: " << th2);
-    float mins, maxs;
-    mDetector.getMinMaxSize(mins, maxs);
-    ROS_INFO_STREAM("Marker size min: " << mins << "  max: " << maxs);
-    ROS_INFO_STREAM("Desired speed: " << mDetector.getDesiredSpeed());
+    for(int i = 0 ; i < 20 ; i ++){
+      MarkerDetector detector;
+      if ( refinementMethod_ == "SUBPIX" )
+        detector.setCornerRefinementMethod(aruco::MarkerDetector::SUBPIX);
+      else if ( refinementMethod_ == "HARRIS" )
+        detector.setCornerRefinementMethod(aruco::MarkerDetector::HARRIS);
+      else if ( refinementMethod_ == "NONE" )
+        detector.setCornerRefinementMethod(aruco::MarkerDetector::NONE);
+      else
+        detector.setCornerRefinementMethod(aruco::MarkerDetector::LINES);
+      availableDetector.push_back(i);
+      vDetector.push_back(detector);
+    }
+
 
     // marker ID arrays
     for(int j=0;j<vMultiBoard_.size();j++){
@@ -207,7 +209,7 @@ public:
       }
       std::cerr<< "id to vector : ";
       for(int i=0;i<vMultiBoard_[j].vMarkerId.size();i++)
-        std::cerr<< vMultiBoard_[j].markerIDToVectorPosition[vMultiBoard_[j].vMarkerId[i]] <<"," ;
+        std::cerr<< vMultiBoard_[j].markerIDToVectorPosition[i] <<"," ;
       std::cerr<<"\n";
       vMultiBoard_[j].detected = false;
     }
@@ -217,7 +219,7 @@ public:
       reference_frame = camera_frame;
 
     // bind
-    dyn_rec_server.setCallback(boost::bind(&AnyArucoMulti::reconf_callback, this, _1, _2));
+    dyn_rec_server.setCallback(boost::bind(&AnyArucoMultiConcurrent::reconf_callback, this, _1, _2));
   }
   bool getTransform(const std::string& refFrame,
                     const std::string& childFrame,
@@ -256,6 +258,14 @@ public:
 
   void image_callback(const sensor_msgs::ImageConstPtr& msg)
   {
+    std::cerr << ros::Time::now() << std::endl;
+    std::cerr << availableDetector.size() << std::endl;
+
+
+    boost::thread threadAlpha(&AnyArucoMultiConcurrent::myThread,this,msg);
+  }
+  void myThread(const sensor_msgs::ImageConstPtr& msg){
+    ros::Time threadStartTime(ros::Time::now());
 
     bool isSubscribed = false;
 
@@ -286,8 +296,21 @@ public:
         // Vector of vector of poses
         std::vector<std::vector<geometry_msgs::PoseStamped>> mPoseMsg;
         //Ok, let's detect
-        mDetector.detect(inImage, markers, camParam, markerSize_, false);
 
+
+
+        MarkerDetector mDetector;
+        mDetector.setCornerRefinementMethod(aruco::MarkerDetector::LINES);
+        try{
+          mDetector.detect(inImage, markers, camParam, vMultiBoard_[0].markerSize, false);
+        }
+        catch (...){
+          ROS_ERROR("\t CRAZY EXCEPTION ");
+          return;
+        }
+
+
+        myMutex_.lock();
         for (auto b : vMultiBoard_){
           std::vector<geometry_msgs::PoseStamped> vPoseMsg(b.vMarkerId.size());
           mPoseMsg.push_back(vPoseMsg);
@@ -306,7 +329,15 @@ public:
             int bIndex = markerIDToBoardVectorPosition_[markers[i].id];
             int vIndex = vMultiBoard_[bIndex].markerIDToVectorPosition[markers[i].id];
 
-            tf::Transform transform = aruco_ros::arucoMarker2Tf(markers[i]);
+            tf::Transform transform ;
+            try{
+              transform = aruco_ros::arucoMarker2Tf(markers[i]);
+            }
+            catch (cv::Exception& e){
+              ROS_ERROR("\t CV EXCEPTION: %s", e.what());
+              return;
+            }
+
             tf::StampedTransform cameraToReference;
             cameraToReference.setIdentity();
 
@@ -336,9 +367,9 @@ public:
             visMarker.type   = visualization_msgs::Marker::CUBE;
             visMarker.action = visualization_msgs::Marker::ADD;
             visMarker.pose = mPoseMsg[bIndex][vIndex].pose;
-            visMarker.scale.x = markerSize_;
+            visMarker.scale.x = vMultiBoard_[bIndex].markerSize;
             visMarker.scale.y = 0.001;
-            visMarker.scale.z = markerSize_;
+            visMarker.scale.z = vMultiBoard_[bIndex].markerSize;
             visMarker.color.a = 1.0;
             visMarker.lifetime = ros::Duration(3.0);
             visMarker.color.r = vMultiBoard_[bIndex].vMarkerR[vIndex];
@@ -346,22 +377,8 @@ public:
             visMarker.color.g = vMultiBoard_[bIndex].vMarkerG[vIndex];
             visMarkerArray.markers.push_back(visMarker);
 
-            tf::Quaternion q( mPoseMsg[bIndex][vIndex].pose.orientation.x
-                            , mPoseMsg[bIndex][vIndex].pose.orientation.y
-                            , mPoseMsg[bIndex][vIndex].pose.orientation.z
-                            , mPoseMsg[bIndex][vIndex].pose.orientation.w);
-            tf::Matrix3x3 R_c_m(q);
-            tf::Vector3 c_r( vMultiBoard_[bIndex].vMarkerX[vIndex]
-                         , 0.0
-                         , vMultiBoard_[bIndex].vMarkerZ[vIndex] );
-            tf::Vector3 m_r = R_c_m*c_r ;
-            //std::cout << m_r.getX() << "," << m_r.getY() << ","<< m_r.getZ()  << std::endl;
-            mPoseMsg[bIndex][vIndex].pose.position.x -= m_r.getX() ;
-            mPoseMsg[bIndex][vIndex].pose.position.y -= m_r.getY() ;
-            mPoseMsg[bIndex][vIndex].pose.position.z -= m_r.getZ() ;
-            //std::cout << mPoseMsg[bIndex][vIndex].pose.position.x << ","
-            //          << mPoseMsg[bIndex][vIndex].pose.position.y << ","
-            //          << mPoseMsg[bIndex][vIndex].pose.position.z  << std::endl;
+            mPoseMsg[bIndex][vIndex].pose.position.x -= vMultiBoard_[bIndex].vMarkerX[vIndex] ;
+            mPoseMsg[bIndex][vIndex].pose.position.z -= vMultiBoard_[bIndex].vMarkerY[vIndex] ;
             vMultiBoard_[bIndex].vMarkerDetected[vIndex] = true;
             vMultiBoard_[bIndex].detected |= true ;
             // but drawing all the detected markers
@@ -417,38 +434,7 @@ public:
           }
         }
 
-
-        //draw a 3d cube in each marker if there is 3d info
-        if(camParam.isValid() && markerSize_!=-1)
-        {
-          for(size_t i=0; i<markers.size(); ++i)
-          {
-            CvDrawingUtils::draw3dAxis(inImage, markers[i], camParam);
-          }
-        }
-
-        if(image_pub.getNumSubscribers() > 0)
-        {
-          //show input with augmented information
-          cv_bridge::CvImage out_msg;
-          out_msg.header.stamp = curr_stamp;
-          out_msg.header.frame_id = msg->header.seq;
-          out_msg.header.frame_id = msg->header.frame_id;
-          out_msg.encoding = sensor_msgs::image_encodings::RGB8;
-          out_msg.image = inImage;
-          image_pub.publish(out_msg.toImageMsg());
-        }
-
-        if(debug_pub.getNumSubscribers() > 0)
-        {
-          //show also the internal image resulting from the threshold operation
-          cv_bridge::CvImage debug_msg;
-          debug_msg.header.stamp = curr_stamp;
-          debug_msg.encoding = sensor_msgs::image_encodings::MONO8;
-          debug_msg.image = mDetector.getThresholdedImage();
-          debug_pub.publish(debug_msg.toImageMsg());
-        }
-
+        myMutex_.unlock();
       }
       catch (cv_bridge::Exception& e)
       {
@@ -456,8 +442,11 @@ public:
         return;
       }
     }
-  }
 
+
+    //std::cout << "\t" << threadStartTime << std::endl;
+    //std::cout << "\t\t" << ros::Time::now() << std::endl;
+  }
   // wait for one camerainfo, then shut down that subscriber
   void cam_info_callback(const sensor_msgs::CameraInfo &msg)
   {
@@ -477,7 +466,9 @@ public:
 
   void reconf_callback(aruco_ros::ArucoThresholdConfig &config, uint32_t level)
   {
-    mDetector.setThresholdParams(config.param1,config.param2);
+    for(int i = 0 ; i<20 ; i++){
+      vDetector[i].setThresholdParams(config.param1,config.param2);
+    }
     if (config.normalizeImage)
     {
       ROS_WARN("normalizeImageIllumination is unimplemented!");
@@ -491,7 +482,10 @@ int main(int argc,char **argv)
 {
   ros::init(argc, argv, "any_aruco_multi");
 
-  AnyArucoMulti node;
+  AnyArucoMultiConcurrent node;
 
-  ros::spin();
+  //ros::spin();
+  ros::AsyncSpinner spinner(boost::thread::hardware_concurrency());
+  spinner.start();
+  ros::waitForShutdown();
 }

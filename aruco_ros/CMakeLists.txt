@@ -55,6 +55,10 @@ add_executable(any_multi_board src/any_multi_board.cpp
 add_dependencies(any_multi_board ${PROJECT_NAME}_gencfg)
 target_link_libraries(any_multi_board ${catkin_LIBRARIES} ${OpenCV_LIBRARIES})
 
+add_executable(any_multi_board_concurrent src/any_multi_board_concurrent.cpp
+                      src/aruco_ros_utils.cpp)
+add_dependencies(any_multi_board_concurrent ${PROJECT_NAME}_gencfg)
+target_link_libraries(any_multi_board_concurrent ${catkin_LIBRARIES} ${OpenCV_LIBRARIES})
 
 
 add_executable(marker_publisher src/marker_publish.cpp
