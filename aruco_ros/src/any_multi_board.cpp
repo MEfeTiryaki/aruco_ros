@@ -128,8 +128,8 @@ public:
     //nh.param<double>("marker_size", marker_size, 0.09);
     //nh.param<int>("marker_id", marker_id, 300);
 
-    nh.getParam("/aruco_multi/multi_boards/multi_board_id", vMultiBoardId_);
-
+    std::string ns_ = ros::this_node::getNamespace();
+    nh.getParam(ns_+"/aruco_multi/multi_boards/multi_board_id", vMultiBoardId_);
     std::cerr<< "Board IDs ";
     for(int id : vMultiBoardId_)
       std::cerr<< id <<"," ;
@@ -138,13 +138,13 @@ public:
     for(auto id : vMultiBoardId_){
       MultiBoard b;
       b.boardId = id;
-      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/marker_size", b.markerSize);
-      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_id", b.vMarkerId);
-      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_x", b.vMarkerX);
-      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_z", b.vMarkerZ);
-      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_r", b.vMarkerR);
-      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_g", b.vMarkerG);
-      nh.getParam("/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_b", b.vMarkerB);
+      nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/marker_size", b.markerSize);
+      nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_id", b.vMarkerId);
+      nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_x", b.vMarkerX);
+      nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/board_z", b.vMarkerZ);
+      nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_r", b.vMarkerR);
+      nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_g", b.vMarkerG);
+      nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_b", b.vMarkerB);
       std::cerr<< "Marker IDs ";
       for(int id :  b.vMarkerId)
         std::cerr<< id <<"," ;
