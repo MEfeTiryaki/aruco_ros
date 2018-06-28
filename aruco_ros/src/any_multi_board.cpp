@@ -38,6 +38,8 @@ or implied, of Rafael Muñoz Salinas.
 #include <aruco/aruco.h>
 #include <aruco/cvdrawingutils.h>
 
+#include <mutex>
+#include <boost/thread/mutex.hpp>
 #include <ros/ros.h>
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
@@ -47,6 +49,7 @@ or implied, of Rafael Muñoz Salinas.
 #include <tf/transform_listener.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
+#include <std_msgs/Bool.h>
 
 #include <dynamic_reconfigure/server.h>
 #include <aruco_ros/ArucoThresholdConfig.h>
@@ -91,8 +94,8 @@ private:
   std::unordered_map<int,int> markerIDToBoardVectorPosition_;
   ros::Publisher markerArrayPublisher_; //rviz visualization marker
   vector<ros::Publisher> vPosePublisher_;
-
-
+  ros::Publisher imageReceivedPublisher_;
+  boost::mutex mutex_;
 
   ros::NodeHandle nh;
   image_transport::ImageTransport it;
@@ -166,7 +169,7 @@ public:
       vPosePublisher_.push_back( nh.advertise<geometry_msgs::PoseStamped>("pose_"+std::to_string(i), 100)) ;
     }
     markerArrayPublisher_ = nh.advertise<visualization_msgs::MarkerArray>("markers", 1);
-
+    imageReceivedPublisher_ = nh.advertise<std_msgs::Bool>("image_received", 1);
   }
   void initilizeSubscribers()
   {
@@ -256,7 +259,11 @@ public:
 
   void image_callback(const sensor_msgs::ImageConstPtr& msg)
   {
-
+    mutex_.lock();
+    ros::Time time_now(ros::Time::now());
+    std_msgs::Bool imageReceivedMsg;
+    imageReceivedMsg.data = true;
+    imageReceivedPublisher_.publish(imageReceivedMsg);
     bool isSubscribed = false;
 
     for(auto& v :vPosePublisher_){
@@ -351,14 +358,15 @@ public:
                             , mPoseMsg[bIndex][vIndex].pose.orientation.z
                             , mPoseMsg[bIndex][vIndex].pose.orientation.w);
             tf::Matrix3x3 R_c_m(q);
-            tf::Vector3 c_r( vMultiBoard_[bIndex].vMarkerX[vIndex]
-                         , 0.0
-                         , vMultiBoard_[bIndex].vMarkerZ[vIndex] );
-            tf::Vector3 m_r = R_c_m*c_r ;
+            tf::Vector3 m_r(vMultiBoard_[bIndex].vMarkerX[vIndex]
+                            ,0.0
+                           , vMultiBoard_[bIndex].vMarkerZ[vIndex]
+                          );
+            tf::Vector3 c_r = (R_c_m)*m_r ;
             //std::cout << m_r.getX() << "," << m_r.getY() << ","<< m_r.getZ()  << std::endl;
-            mPoseMsg[bIndex][vIndex].pose.position.x -= m_r.getX() ;
-            mPoseMsg[bIndex][vIndex].pose.position.y -= m_r.getY() ;
-            mPoseMsg[bIndex][vIndex].pose.position.z -= m_r.getZ() ;
+            mPoseMsg[bIndex][vIndex].pose.position.x -= c_r.getX() ;
+            mPoseMsg[bIndex][vIndex].pose.position.y -= c_r.getY() ;
+            mPoseMsg[bIndex][vIndex].pose.position.z -= c_r.getZ() ;
             //std::cout << mPoseMsg[bIndex][vIndex].pose.position.x << ","
             //          << mPoseMsg[bIndex][vIndex].pose.position.y << ","
             //          << mPoseMsg[bIndex][vIndex].pose.position.z  << std::endl;
@@ -456,6 +464,8 @@ public:
         return;
       }
     }
+    //std::cout<<"\t"<<ros::Time::now()-time_now<<std::endl;
+    mutex_.unlock();
   }
 
   // wait for one camerainfo, then shut down that subscriber
