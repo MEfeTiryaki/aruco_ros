@@ -133,10 +133,10 @@ public:
 
     std::string ns_ = ros::this_node::getNamespace();
     nh.getParam(ns_+"/aruco_multi/multi_boards/multi_board_id", vMultiBoardId_);
-    std::cerr<< "Board IDs ";
-    for(int id : vMultiBoardId_)
-      std::cerr<< id <<"," ;
-    std::cerr<<"\n";
+    //std::cerr<< "Board IDs ";
+    //for(int id : vMultiBoardId_)
+    //  std::cerr<< id <<"," ;
+    //std::cerr<<"\n";
 
     for(auto id : vMultiBoardId_){
       MultiBoard b;
@@ -148,10 +148,10 @@ public:
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_r", b.vMarkerR);
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_g", b.vMarkerG);
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_b", b.vMarkerB);
-      std::cerr<< "Marker IDs ";
-      for(int id :  b.vMarkerId)
-        std::cerr<< id <<"," ;
-      std::cerr<<"\n";
+      //std::cerr<< "Marker IDs ";
+      //for(int id :  b.vMarkerId)
+      //  std::cerr<< id <<"," ;
+      //std::cerr<<"\n";
       vMultiBoard_.push_back(b);
     }
     markerSize_ = vMultiBoard_[0].markerSize;
@@ -208,10 +208,10 @@ public:
         markerIDToBoardVectorPosition_.insert({vMultiBoard_[j].vMarkerId[i],j});
         vMultiBoard_[j].vMarkerDetected.push_back(false) ;
       }
-      std::cerr<< "id to vector : ";
-      for(int i=0;i<vMultiBoard_[j].vMarkerId.size();i++)
-        std::cerr<< vMultiBoard_[j].markerIDToVectorPosition[vMultiBoard_[j].vMarkerId[i]] <<"," ;
-      std::cerr<<"\n";
+      //std::cerr<< "id to vector : ";
+      //for(int i=0;i<vMultiBoard_[j].vMarkerId.size();i++)
+      //  std::cerr<< vMultiBoard_[j].markerIDToVectorPosition[vMultiBoard_[j].vMarkerId[i]] <<"," ;
+      //std::cerr<<"\n";
       vMultiBoard_[j].detected = false;
     }
 
