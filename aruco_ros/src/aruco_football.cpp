@@ -97,6 +97,12 @@ private:
   ros::Publisher imageReceivedPublisher_;
   boost::mutex mutex_;
 
+  ros::Publisher ballPosePublisher_;
+  vector<int> threshold_min_;
+  vector<int> threshold_max_;
+  vector<double> imageToRealMapping_;
+
+
   ros::NodeHandle nh;
   image_transport::ImageTransport it;
   image_transport::Subscriber image_sub;
@@ -133,10 +139,6 @@ public:
 
     std::string ns_ = ros::this_node::getNamespace();
     nh.getParam(ns_+"/aruco_multi/multi_boards/multi_board_id", vMultiBoardId_);
-    //std::cerr<< "Board IDs ";
-    //for(int id : vMultiBoardId_)
-    //  std::cerr<< id <<"," ;
-    //std::cerr<<"\n";
 
     for(auto id : vMultiBoardId_){
       MultiBoard b;
@@ -148,14 +150,13 @@ public:
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_r", b.vMarkerR);
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_g", b.vMarkerG);
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_b", b.vMarkerB);
-      std::cerr<< "Marker IDs ";
-      for(int id :  b.vMarkerId)
-        std::cerr<< id <<"," ;
-      std::cerr<<"\n";
       vMultiBoard_.push_back(b);
     }
     markerSize_ = vMultiBoard_[0].markerSize;
 
+    nh.getParam(ns_ + "/aruco_multi/threshold_min", threshold_min_);
+    nh.getParam(ns_ + "/aruco_multi/threshold_max", threshold_max_);
+    nh.getParam(ns_ + "/aruco_multi/image_to_real_mapping", imageToRealMapping_);
   }
   void create()
   {
@@ -170,6 +171,7 @@ public:
     }
     markerArrayPublisher_ = nh.advertise<visualization_msgs::MarkerArray>("markers", 1);
     imageReceivedPublisher_ = nh.advertise<std_msgs::Bool>("image_received", 1);
+    ballPosePublisher_  = nh.advertise<geometry_msgs::PoseStamped>("pose_ball", 100);
   }
   void initilizeSubscribers()
   {
@@ -208,10 +210,6 @@ public:
         markerIDToBoardVectorPosition_.insert({vMultiBoard_[j].vMarkerId[i],j});
         vMultiBoard_[j].vMarkerDetected.push_back(false) ;
       }
-      std::cerr<< "id to vector : ";
-      for(int i=0;i<vMultiBoard_[j].vMarkerId.size();i++)
-        std::cerr<< vMultiBoard_[j].markerIDToVectorPosition[vMultiBoard_[j].vMarkerId[i]] <<"," ;
-      std::cerr<<"\n";
       vMultiBoard_[j].detected = false;
     }
 
@@ -265,7 +263,6 @@ public:
     imageReceivedMsg.data = true;
     imageReceivedPublisher_.publish(imageReceivedMsg);
     bool isSubscribed = false;
-
     for(auto& v :vPosePublisher_){
       isSubscribed |= v.getNumSubscribers() != 0;
     }
@@ -275,18 +272,70 @@ public:
       ROS_DEBUG("No subscribers, not looking for aruco markers");
       return;
     }
-
     static tf::TransformBroadcaster br;
     if(cam_info_received)
     {
 
       ros::Time curr_stamp(ros::Time::now());
       cv_bridge::CvImagePtr cv_ptr;
-      try
-      {
+      //try
+      //{
 
         cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::RGB8);
         inImage = cv_ptr->image;
+        cv::Mat src_gray;
+        cv::Mat src_gray_undilated;
+
+        //cv::inRange(inImage, cv::Scalar(0,0,100), cv::Scalar(10,10,255), src_gray_undilated);
+        cv::inRange(inImage, cv::Scalar(threshold_min_[0],threshold_min_[1],threshold_min_[2])
+                           , cv::Scalar(threshold_max_[0],threshold_min_[1],threshold_max_[2])
+                           , src_gray_undilated);
+        /// Apply the dilation operation
+        cv::dilate(src_gray_undilated, src_gray, cv::Mat(), cv::Point(-1, -1), 2, 1, 1);
+        cv::Mat canny_output;
+        std::vector<std::vector<cv::Point> > contours;
+        std::vector<cv::Vec4i> hierarchy;
+        cv::RNG rng(12345);
+        cv::Canny( src_gray, canny_output, 100, 200, 3 );
+        cv::findContours( canny_output, contours, hierarchy,
+              cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE, cv::Point(0, 0) );
+        cv::Mat drawing = cv::Mat::zeros( canny_output.size(), CV_8UC3 );
+        if(contours.size()>0){
+          /// Get the moments
+          std::vector<cv::Moments> mu(contours.size() );
+          for( int i = 0; i < contours.size(); i++ ){
+            mu[i] = cv::moments( contours[i], false );
+          }
+          ///  Get the mass centers:
+          std::vector<cv::Point2f> mc( contours.size() );
+          for( int i = 0; i < contours.size(); i++ ){
+             mc[i] = cv::Point2f( mu[i].m10/mu[i].m00 , mu[i].m01/mu[i].m00 );
+          }
+          double maxArea = -1.0 ;
+          int maxIndex = 0;
+          for(int i = 0 ; i< contours.size(); i++ ){
+            if(mu[i].m00> maxArea){
+              maxArea = mu[i].m00;
+              maxIndex = i;
+            }
+          }
+          std::vector<double> ball_position = std::vector<double>(2) ;
+          cv::Scalar color = cv::Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
+          cv::circle( drawing, mc[maxIndex], 4, color, -1, 8, 0 );
+          cv::drawContours( drawing, contours, (int)maxIndex, color, 2, 8, hierarchy, 0, cv::Point() );
+          ball_position[0] = (mc[maxIndex].x-800.0) / imageToRealMapping_[0];
+          ball_position[1] = (mc[maxIndex].y-800.0) / imageToRealMapping_[1];
+
+          geometry_msgs::PoseStamped ballPoseMsg;
+          ballPoseMsg.pose.position.x = ball_position[0] ;
+          ballPoseMsg.pose.position.y = ball_position[1] ;
+          ballPoseMsg.pose.position.z = 0.05 ;
+          ballPosePublisher_.publish(ballPoseMsg);
+        }
+        //cv::namedWindow( "Contours", cv::WINDOW_AUTOSIZE );
+        //cv::imshow( "Contours", drawing );
+        //cv::imshow("field",src_gray);
+        //cv::waitKey(10);
 
         //detection results will go into "markers"
         markers.clear();
@@ -457,12 +506,12 @@ public:
           debug_pub.publish(debug_msg.toImageMsg());
         }
 
-      }
+      /*}
       catch (cv_bridge::Exception& e)
       {
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
-      }
+      }*/
     }
     //std::cout<<"\t"<<ros::Time::now()-time_now<<std::endl;
     mutex_.unlock();
