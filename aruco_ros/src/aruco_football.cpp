@@ -51,6 +51,7 @@ or implied, of Rafael Muñoz Salinas.
 #include <visualization_msgs/MarkerArray.h>
 #include <std_msgs/Bool.h>
 
+#include <std_msgs/Int16MultiArray.h>
 #include <dynamic_reconfigure/server.h>
 #include <aruco_ros/ArucoThresholdConfig.h>
 using namespace aruco;
@@ -102,6 +103,7 @@ private:
   vector<int> threshold_max_;
   vector<double> imageToRealMapping_;
 
+  ros::Subscriber thresholdSubscriber_;
 
   ros::NodeHandle nh;
   image_transport::ImageTransport it;
@@ -177,6 +179,7 @@ public:
   {
     image_sub = it.subscribe("/image", 1, &AnyArucoMulti::image_callback, this);
     cam_info_sub = nh.subscribe("/camera_info", 1, &AnyArucoMulti::cam_info_callback, this);
+    thresholdSubscriber_= nh.subscribe("/orospu", 1, &AnyArucoMulti::threshold_callback, this);
   }
   void initilizeServices()
   {
@@ -254,6 +257,16 @@ public:
     }
     return true;
   }
+  void threshold_callback(std_msgs::Int16MultiArray msg)
+  {
+    //std::cout<<msg<<std::endl;
+    threshold_min_[0] = msg.data[0];
+    threshold_min_[1] = msg.data[1];
+    threshold_min_[2] = msg.data[2];
+    threshold_max_[0] = msg.data[3];
+    threshold_max_[1] = msg.data[4];
+    threshold_max_[2] = msg.data[5];
+  }
 
   void image_callback(const sensor_msgs::ImageConstPtr& msg)
   {
@@ -288,9 +301,10 @@ public:
 
         //cv::inRange(inImage, cv::Scalar(0,0,100), cv::Scalar(10,10,255), src_gray_undilated);
         cv::inRange(inImage, cv::Scalar(threshold_min_[0],threshold_min_[1],threshold_min_[2])
-                           , cv::Scalar(threshold_max_[0],threshold_min_[1],threshold_max_[2])
+                           , cv::Scalar(threshold_max_[0],threshold_max_[1],threshold_max_[2])
                            , src_gray_undilated);
         /// Apply the dilation operation
+        cv::dilate(src_gray_undilated, src_gray, cv::Mat(), cv::Point(-1, -1), 2, 1, 1);
         cv::dilate(src_gray_undilated, src_gray, cv::Mat(), cv::Point(-1, -1), 2, 1, 1);
         cv::Mat canny_output;
         std::vector<std::vector<cv::Point> > contours;
@@ -314,8 +328,23 @@ public:
           double maxArea = -1.0 ;
           int maxIndex = 0;
           for(int i = 0 ; i< contours.size(); i++ ){
-            if(mu[i].m00> maxArea){
+            /*
+            std::cout<<mu[i].m00<<std::endl;
+            std::cout<<mu[i].m10<<std::endl;
+            std::cout<<mu[i].m01<<std::endl;
+            std::cout<<mu[i].m20<<std::endl;
+            std::cout<<mu[i].m11<<std::endl;
+            std::cout<<mu[i].m02<<std::endl;
+            std::cout<<mu[i].m30<<std::endl;
+            std::cout<<mu[i].m21<<std::endl;
+            std::cout<<mu[i].m12<<std::endl;
+            std::cout<<mu[i].m03<<std::endl;
+            std::cout<<"================="<<std::endl;
+            //*/
+            if(mu[i].m00> maxArea && mu[i].m00<6000 && mu[i].m00>5000){
               maxArea = mu[i].m00;
+
+
               maxIndex = i;
             }
           }
@@ -323,8 +352,8 @@ public:
           cv::Scalar color = cv::Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
           cv::circle( drawing, mc[maxIndex], 4, color, -1, 8, 0 );
           cv::drawContours( drawing, contours, (int)maxIndex, color, 2, 8, hierarchy, 0, cv::Point() );
-          ball_position[0] = (mc[maxIndex].x-800.0) / imageToRealMapping_[0];
-          ball_position[1] = (mc[maxIndex].y-800.0) / imageToRealMapping_[1];
+          ball_position[0] = (mc[maxIndex].x-src_gray_undilated.size().width/2) / imageToRealMapping_[0];
+          ball_position[1] = (mc[maxIndex].y-src_gray_undilated.size().height/2) / imageToRealMapping_[1];
 
           geometry_msgs::PoseStamped ballPoseMsg;
           ballPoseMsg.pose.position.x = ball_position[0] ;
@@ -332,10 +361,11 @@ public:
           ballPoseMsg.pose.position.z = 0.05 ;
           ballPosePublisher_.publish(ballPoseMsg);
         }
-        //cv::namedWindow( "Contours", cv::WINDOW_AUTOSIZE );
-        //cv::imshow( "Contours", drawing );
-        //cv::imshow("field",src_gray);
-        //cv::waitKey(10);
+        cv::namedWindow( "Contours", cv::WINDOW_AUTOSIZE );
+
+        cv::imshow( "Contours", drawing );
+        cv::imshow("field",src_gray);
+        cv::waitKey(10);
 
         //detection results will go into "markers"
         markers.clear();
