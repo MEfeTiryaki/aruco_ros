@@ -148,10 +148,12 @@ public:
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_r", b.vMarkerR);
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_g", b.vMarkerG);
       nh.getParam(ns_ + "/aruco_multi/multi_boards/multi_board_"+std::to_string(id)+"/color_b", b.vMarkerB);
+      /*
       std::cerr<< "Marker IDs ";
       for(int id :  b.vMarkerId)
         std::cerr<< id <<"," ;
       std::cerr<<"\n";
+      */
       vMultiBoard_.push_back(b);
     }
     markerSize_ = vMultiBoard_[0].markerSize;
@@ -208,10 +210,12 @@ public:
         markerIDToBoardVectorPosition_.insert({vMultiBoard_[j].vMarkerId[i],j});
         vMultiBoard_[j].vMarkerDetected.push_back(false) ;
       }
+      /*
       std::cerr<< "id to vector : ";
       for(int i=0;i<vMultiBoard_[j].vMarkerId.size();i++)
         std::cerr<< vMultiBoard_[j].markerIDToVectorPosition[vMultiBoard_[j].vMarkerId[i]] <<"," ;
       std::cerr<<"\n";
+      */
       vMultiBoard_[j].detected = false;
     }
 

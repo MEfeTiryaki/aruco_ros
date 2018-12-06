@@ -328,7 +328,7 @@ public:
           double maxArea = -1.0 ;
           int maxIndex = 0;
           for(int i = 0 ; i< contours.size(); i++ ){
-            /*
+            //*
             std::cout<<mu[i].m00<<std::endl;
             std::cout<<mu[i].m10<<std::endl;
             std::cout<<mu[i].m01<<std::endl;
